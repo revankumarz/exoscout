@@ -1,0 +1,7 @@
+streamlit>=1.60
+lightkurve>=2.6
+astropy>=8.0
+requests>=2.31
+matplotlib>=3.8
+numpy
+pandas
