@@ -17,15 +17,15 @@ import streamlit as st
 
 from exoscout.target import parse_target
 from exoscout.provenance import Provenance
-from exoscout.tools import archive, lightcurve
+from exoscout.tools import archive, lightcurve, vetting
 
 st.set_page_config(page_title="ExoScout", page_icon="🔭", layout="wide")
 
 st.title("🔭 ExoScout")
 st.caption(
-    "Autonomous TESS candidate triage - week-1 MVP. "
-    "Two tools: light-curve vetting (Lightkurve/MAST) + novelty check "
-    "(NASA Exoplanet Archive)."
+    "Autonomous TESS candidate triage. "
+    "Tools: light-curve search (Lightkurve/MAST), transit vetting "
+    "(odd/even, secondary, SNR), and novelty check (NASA Exoplanet Archive)."
 )
 
 with st.sidebar:
@@ -75,9 +75,37 @@ if run:
         else:
             st.error(lc.get("error", "Light-curve step failed."))
 
-    # ---- Tool 2: archive novelty check ---------------------------------------
+    # ---- Tool 2: vetting diagnostics -----------------------------------------
+    vet = {}
+    if lc.get("ok"):
+        vet = vetting.run_vetting(lc)
+        prov.record(
+            "vetting.run_vetting",
+            vet.get("error") or vet.get("summary", ""),
+            vet.get("source", ""),
+            ok=vet.get("ok", False),
+        )
+        with col_lc:
+            st.markdown("#### Vetting")
+            if vet.get("ok"):
+                v1, v2, v3 = st.columns(3)
+                v1.metric("Odd/even Δ (σ)", vet["oddeven_sigma"] if vet["oddeven_sigma"] is not None else "n/a")
+                v2.metric("Secondary (σ)", vet["secondary_sigma"] if vet["secondary_sigma"] is not None else "n/a")
+                v3.metric("Depth SNR", vet["depth_snr"] if vet["depth_snr"] is not None else "n/a")
+                if "PASSES" in vet["summary"]:
+                    st.success(vet["summary"])
+                elif "WEAK" in vet["summary"]:
+                    st.warning(vet["summary"])
+                else:
+                    st.error(vet["summary"])
+                for f in vet.get("flags", []):
+                    st.write(f"- {f}")
+            else:
+                st.warning(vet.get("error", "Vetting unavailable."))
+
+    # ---- Tool 3: archive novelty check ---------------------------------------
     with col_arch:
-        st.markdown("### 2 - Already known?")
+        st.markdown("### 3 - Already known?")
         with st.spinner("Querying NASA Exoplanet Archive (TOI + confirmed tables)..."):
             arch = archive.check_known(tic_id=target.tic_id, toi=target.toi)
         prov.record(
@@ -110,6 +138,9 @@ if run:
     # ---- Verdict -------------------------------------------------------------
     st.markdown("---")
     st.markdown("### Verdict (decision-support - human in the loop)")
+    if vet.get("ok"):
+        st.write(f"**Vetting:** {vet['summary']}"
+                 + (f" - {'; '.join(vet['flags'])}" if vet.get("flags") else ""))
     if arch.get("ok"):
         if arch["confirmed"]:
             st.info("This target maps to a **confirmed / known planet**. Low novelty - "
