@@ -29,7 +29,7 @@ def _load(data_path: str):
     return d["global_view"], d["local_view"], d["label"]
 
 
-def train(data_path: str, epochs: int = 40, batch_size: int = 32, lr: float = 1e-4,
+def train(data_path: str, epochs: int = 60, batch_size: int = 32, lr: float = 1e-3,
           seed: int = 42) -> dict:
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -42,8 +42,8 @@ def train(data_path: str, epochs: int = 40, batch_size: int = 32, lr: float = 1e
     model = AstroNet().to(dev)
     # Materialise LazyLinear before the optimizer sees the params.
     with torch.no_grad():
-        model(torch.zeros(1, model.global_bins, device=dev),
-              torch.zeros(1, model.local_bins, device=dev))
+        model(torch.zeros(2, model.global_bins, device=dev),
+              torch.zeros(2, model.local_bins, device=dev))
 
     # Class weighting in case the usable split is imbalanced.
     pos_weight = torch.tensor([(y_tr == 0).sum() / max((y_tr == 1).sum(), 1)],
@@ -63,6 +63,8 @@ def train(data_path: str, epochs: int = 40, batch_size: int = 32, lr: float = 1e
         total = 0.0
         for i in range(0, n, batch_size):
             idx = perm[i:i + batch_size]
+            if idx.numel() < 2:      # BatchNorm needs >1 sample in train mode
+                continue
             opt.zero_grad()
             logits = model(gt[idx], lt[idx])
             loss = loss_fn(logits, yt[idx])
@@ -98,9 +100,9 @@ def train(data_path: str, epochs: int = 40, batch_size: int = 32, lr: float = 1e
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=os.path.join("data", "trainset.npz"))
-    ap.add_argument("--epochs", type=int, default=40)
+    ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--batch-size", type=int, default=32)
-    ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--lr", type=float, default=1e-3)
     args = ap.parse_args()
     train(args.data, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
 

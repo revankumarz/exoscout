@@ -30,9 +30,13 @@ class _ConvColumn(nn.Module):
         in_ch = 1
         pad = kernel // 2
         for out_ch in filters:
+            # Conv-BN-ReLU blocks: BatchNorm is what lets a deep 1D CNN actually
+            # train (without it the loss stays flat at chance).
             layers += [
-                nn.Conv1d(in_ch, out_ch, kernel, padding=pad), nn.ReLU(),
-                nn.Conv1d(out_ch, out_ch, kernel, padding=pad), nn.ReLU(),
+                nn.Conv1d(in_ch, out_ch, kernel, padding=pad),
+                nn.BatchNorm1d(out_ch), nn.ReLU(),
+                nn.Conv1d(out_ch, out_ch, kernel, padding=pad),
+                nn.BatchNorm1d(out_ch), nn.ReLU(),
                 nn.MaxPool1d(pool, stride=2),
             ]
             in_ch = out_ch
@@ -54,11 +58,10 @@ class AstroNet(nn.Module):
 
         # LazyLinear infers the concatenated flatten size on first forward.
         self.head = nn.Sequential(
-            nn.LazyLinear(512), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(512, 512), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(512, 512), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(512, 512), nn.ReLU(),
-            nn.Linear(512, 1),
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(512, 512), nn.BatchNorm1d(512), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(512, 256), nn.BatchNorm1d(256), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(256, 1),
         )
 
     def forward(self, g: torch.Tensor, l: torch.Tensor) -> torch.Tensor:
@@ -71,9 +74,10 @@ class AstroNet(nn.Module):
 def load_model(path: str, map_location: str = "cpu") -> AstroNet:
     """Instantiate and load weights (runs a dummy forward to build LazyLinear)."""
     model = AstroNet()
+    model.eval()  # eval mode so BatchNorm accepts the single-row dummy forward
     # Materialise lazy parameters before loading the state dict.
     with torch.no_grad():
-        model(torch.zeros(1, model.global_bins), torch.zeros(1, model.local_bins))
+        model(torch.zeros(2, model.global_bins), torch.zeros(2, model.local_bins))
     state = torch.load(path, map_location=map_location)
     model.load_state_dict(state)
     model.eval()
