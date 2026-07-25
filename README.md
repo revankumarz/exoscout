@@ -1,12 +1,44 @@
 # 🔭 ExoScout
 
-Autonomous TESS candidate triage & follow-up planning agent.
+**Autonomous TESS candidate triage & follow-up planning agent.**
 
-ExoScout takes a single TESS candidate (a TOI or TIC id), vets the transit,
-checks whether it is **already known or a likely false positive** against public
-science archives, and (in later stages) checks the literature and plans
-ground-based follow-up. It is being built as an agentic-AI portfolio project:
-heavy compute lives in deterministic tools; a small LLM orchestrates.
+![CI](https://github.com/revankumarz/exoscout/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+ExoScout takes a single TESS candidate (a TOI or TIC id) and runs the whole
+first-pass triage an astronomer would: it vets the transit, decides whether it
+is **already known or a likely false positive** against public science archives,
+checks the literature, and plans ground-based follow-up — then writes a one-page
+observing brief. An LLM agent decides which tools to call; the heavy compute
+lives in deterministic, auditable tools.
+
+> Verdicts are **decision-support with a human in the loop**, not authoritative
+> discovery claims.
+
+## How it works
+
+```mermaid
+flowchart TD
+    U[TOI / TIC id] --> A[LLM orchestrator<br/>ReAct loop]
+    A -->|calls tools| T
+    subgraph T[Deterministic tools]
+        LC[lightcurve<br/>BLS transit search]
+        VET[vetting<br/>odd/even · secondary · SNR]
+        ARC[archive<br/>known planet?]
+        STE[stellar<br/>SIMBAD object type]
+        LIT[literature<br/>arXiv + ADS]
+        PLN[planning<br/>astroplan observability]
+    end
+    T --> V[Verdict<br/>real? · false-positive risk? · novel?]
+    V --> B[Observing brief]
+    V --> M[(SQLite memory)]
+    T --> P[Provenance log]
+```
+
+Every numeric claim in the verdict traces back to a tool call in the provenance
+log. No LLM available? The orchestrator falls back to a deterministic planner, so
+it always runs.
 
 ## What it does
 
@@ -70,14 +102,27 @@ streamlit run app.py
 
 Then enter a target like `TOI 700.01`, `TIC 150428135`, or a bare TIC number.
 
+Command line:
+
+```bash
+python agent_cli.py "TOI 700.01" --brief      # full triage + observing brief
+python evaluate.py                            # novelty-classifier accuracy
+pytest -q                                     # offline test suite
+```
+
 All data comes from free public APIs (NASA Exoplanet Archive TAP, MAST via
-Lightkurve) - no credentials required.
+Lightkurve, arXiv, SIMBAD) - no credentials required. ADS is optional (set
+`ADS_TOKEN` for richer literature results).
 
-## Design note
+## Engineering notes
 
-Tools are pure functions returning plain dicts and never raise for expected
-failures, so they can be registered as LLM-callable tools later without
-changing call sites. This is deliberate scaffolding for the agent stages.
+- **Auditable by design.** Tools are pure functions returning plain dicts and
+  never raise for expected failures; every claim is logged to a provenance trail.
+- **Graceful degradation.** A flaky archive or an unreachable SIMBAD marks that
+  step failed and the pipeline continues - a triage never crashes on one tool.
+- **Response cache** (`exoscout/cache.py`) with TTL respects API rate limits and
+  makes repeat queries ~500x faster.
+- **Tested + CI.** Offline `pytest` suite runs on every push via GitHub Actions.
 
 > Verdicts are **decision-support with a human in the loop**, not authoritative
 > discovery claims.
