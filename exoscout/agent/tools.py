@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Callable
 
 from exoscout.agent.context import AgentContext
-from exoscout.tools import archive, lightcurve, literature, vetting
+from exoscout.tools import archive, lightcurve, literature, planning, stellar, vetting
 
 
 def _t_fetch_lightcurve(ctx: AgentContext, max_period: float | None = None) -> dict:
@@ -66,6 +66,32 @@ def _t_literature_check(ctx: AgentContext) -> dict:
             "summary": res["summary"], "top_titles": top}
 
 
+def _t_stellar_context(ctx: AgentContext) -> dict:
+    arch = ctx.full.get("archive", {})
+    res = stellar.stellar_context(arch.get("ra"), arch.get("dec"))
+    ctx.store("stellar", res)
+    ctx.prov.record("stellar.stellar_context",
+                    res.get("summary") or res.get("reason", "skipped"),
+                    res.get("source", ""), ok=res.get("ok", False))
+    return {"ok": res.get("ok", False), "found": res.get("found"),
+            "otype": res.get("otype"), "eclipsing_binary_flag": res.get("eclipsing_binary_flag"),
+            "summary": res.get("summary") or res.get("reason", "skipped")}
+
+
+def _t_plan_followup(ctx: AgentContext, nights: int | None = None) -> dict:
+    arch = ctx.full.get("archive", {})
+    res = planning.plan_followup(arch.get("ra"), arch.get("dec"),
+                                 ctx.target.label, nights=int(nights or 14))
+    ctx.store("planning", res)
+    ctx.prov.record("planning.plan_followup", res.get("error") or res.get("summary", ""),
+                    res.get("source", ""), ok=res.get("ok", False))
+    if not res.get("ok"):
+        return {"ok": False, "error": res.get("error")}
+    return {"ok": True, "summary": res["summary"], "best": res.get("best"),
+            "observatories": [{"observatory": r["observatory"], "observable": r["observable"],
+                               "hours": r["obs_hours_in_window"]} for r in res["observatories"]]}
+
+
 # name -> (callable, JSON schema)
 _REGISTRY: dict[str, tuple[Callable, dict]] = {
     "fetch_lightcurve": (_t_fetch_lightcurve, {
@@ -101,6 +127,24 @@ _REGISTRY: dict[str, tuple[Callable, dict]] = {
             "description": "Search arXiv (and ADS if configured) for papers mentioning this target, "
                            "to judge whether it has already been studied.",
             "parameters": {"type": "object", "properties": {}},
+        }}),
+    "stellar_context": (_t_stellar_context, {
+        "type": "function",
+        "function": {
+            "name": "stellar_context",
+            "description": "Look up the host star in SIMBAD for its object type - useful to catch "
+                           "eclipsing binaries. Needs archive_check to have run first (for coords).",
+            "parameters": {"type": "object", "properties": {}},
+        }}),
+    "plan_followup": (_t_plan_followup, {
+        "type": "function",
+        "function": {
+            "name": "plan_followup",
+            "description": "Compute ground-based observability across observatories for the next N "
+                           "nights (altitude/airmass/darkness/moon). Needs archive_check first (coords).",
+            "parameters": {"type": "object", "properties": {
+                "nights": {"type": "integer", "description": "Nights to plan ahead (default 14)."}
+            }},
         }}),
 }
 

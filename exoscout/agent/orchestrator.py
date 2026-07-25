@@ -21,16 +21,19 @@ from exoscout.agent import tools as agent_tools
 from exoscout.agent.context import AgentContext
 from exoscout.agent.llm import LLMClient
 from exoscout.target import parse_target
+from exoscout import store
 
 SYSTEM_PROMPT = """You are ExoScout, an autonomous assistant that triages a single TESS \
 planet candidate. Your job: decide whether the candidate is (a) a real transit, \
 (b) a likely false positive, and (c) already known / already studied, then give a \
 follow-up recommendation.
 
-You have tools: fetch_lightcurve, vet_transit, archive_check, literature_check. \
-Always fetch the light curve before vetting. Gather evidence from the archive and \
-the literature before judging novelty. Call tools until you have enough evidence, \
-then STOP calling tools and write a final brief.
+You have tools: fetch_lightcurve, vet_transit, archive_check, stellar_context, \
+literature_check, plan_followup. Always fetch the light curve before vetting, and \
+run archive_check before stellar_context or plan_followup (they need coordinates). \
+Gather evidence from the archive and the literature before judging novelty, and \
+plan follow-up if the candidate looks promising. Call tools until you have enough \
+evidence, then STOP calling tools and write a final brief.
 
 The final brief must state: transit_real (yes/no/unclear), false_positive_risk \
 (low/medium/high), novelty (novel/known-candidate/confirmed/already-studied), and a \
@@ -44,6 +47,8 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
     vet = ctx.full.get("vetting", {})
     arch = ctx.full.get("archive", {})
     lit = ctx.full.get("literature", {})
+    stel = ctx.full.get("stellar", {})
+    plan = ctx.full.get("planning", {})
 
     transit_real = "unclear"
     if vet.get("ok"):
@@ -56,6 +61,9 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
             fp_risk = "high"
         elif "PASSES" in vet.get("summary", ""):
             fp_risk = "low"
+    # SIMBAD calling it a binary/variable is a strong false-positive signal.
+    if stel.get("eclipsing_binary_flag"):
+        fp_risk = "high"
 
     if arch.get("confirmed"):
         novelty = "confirmed / known planet"
@@ -68,14 +76,15 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
     else:
         novelty = "unknown"
 
+    where = f" Best placed at {plan['best']}." if plan.get("ok") and plan.get("best") else ""
     if novelty.startswith("novel") and fp_risk == "low" and transit_real == "yes":
-        rec = "Strong follow-up target - schedule ground-based confirmation."
+        rec = "Strong follow-up target - schedule ground-based confirmation." + where
     elif fp_risk == "high":
         rec = "Likely false positive - deprioritise unless re-vetted."
     elif "confirmed" in novelty or "existing" in novelty or "studied" in novelty:
         rec = "Low novelty - already known/studied; not a new discovery."
     else:
-        rec = "Inconclusive - gather more data before deciding."
+        rec = "Inconclusive - gather more data before deciding." + where
 
     return {"transit_real": transit_real, "false_positive_risk": fp_risk,
             "novelty": novelty, "recommendation": rec}
@@ -85,12 +94,15 @@ def run_deterministic(target_text: str, max_period: float = 15.0,
                       max_sectors: int | None = None) -> AgentContext:
     ctx = AgentContext(target=parse_target(target_text), max_period=max_period,
                        max_sectors=max_sectors)
-    ctx.log_step("plan", "Deterministic plan: fetch -> vet -> archive -> literature.")
-    for name in ("fetch_lightcurve", "vet_transit", "archive_check", "literature_check"):
+    ctx.log_step("plan", "Deterministic plan: fetch -> vet -> archive -> stellar "
+                         "-> literature -> plan_followup.")
+    for name in ("fetch_lightcurve", "vet_transit", "archive_check", "stellar_context",
+                 "literature_check", "plan_followup"):
         out = agent_tools.call_tool(name, ctx, {})
         ctx.log_step("tool", json.dumps(out)[:400], tool=name, data=out)
     ctx.full["verdict"] = _synthesize_verdict(ctx)
     ctx.log_step("verdict", json.dumps(ctx.full["verdict"]))
+    store.save_triage(ctx)
     return ctx
 
 
@@ -145,4 +157,5 @@ def run_agent(target_text: str, max_period: float = 15.0, max_steps: int = 8,
 
     # Always attach a rule-based verdict too, as a grounded cross-check.
     ctx.full["verdict"] = _synthesize_verdict(ctx)
+    store.save_triage(ctx)
     return ctx

@@ -50,19 +50,17 @@ def _tap_query(adql: str) -> pd.DataFrame:
 
 def _resolve_tic(tic_id: int | None, toi: float | None) -> tuple[int | None, pd.DataFrame]:
     """Return (tic_id, toi_rows). If only a TOI number is given, look up its TIC."""
+    cols = ("toi, tid, tfopwg_disp, pl_orbper, pl_trandurh, pl_trandep, "
+            "st_tmag, st_teff, st_rad, st_dist, ra, dec")
     if tic_id is not None:
-        rows = _tap_query(
-            f"select toi, tid, tfopwg_disp, pl_orbper, pl_trandurh, pl_trandep, "
-            f"st_tmag, ra, dec from toi where tid = {int(tic_id)}"
-        )
+        rows = _tap_query(f"select {cols} from toi where tid = {int(tic_id)}")
         return int(tic_id), rows
 
     if toi is not None:
         # match either the exact planet (700.01) or the star prefix (700)
         prefix = int(toi)
         rows = _tap_query(
-            f"select toi, tid, tfopwg_disp, pl_orbper, pl_trandurh, pl_trandep, "
-            f"st_tmag, ra, dec from toi where toi = {toi:g} or toipfx = {prefix}"
+            f"select {cols} from toi where toi = {toi:g} or toipfx = {prefix}"
         )
         resolved = int(rows["tid"].iloc[0]) if not rows.empty else None
         return resolved, rows
@@ -122,6 +120,15 @@ def check_known(tic_id: int | None = None, toi: float | None = None) -> dict:
         f"{d} ({DISP_MEANING.get(d, 'unknown')})" for d in dict.fromkeys(dispositions)
     ) or "n/a"
 
+    # Surface coordinates + stellar context from the first TOI match (used by
+    # the follow-up planner and the observing brief).
+    def _first(field):
+        for m in toi_matches:
+            v = m.get(field)
+            if v is not None and str(v).lower() != "nan":
+                return v
+        return None
+
     return {
         "ok": True,
         "error": None,
@@ -131,6 +138,12 @@ def check_known(tic_id: int | None = None, toi: float | None = None) -> dict:
         "disposition": disp_human,
         "toi_matches": toi_matches,
         "confirmed_matches": confirmed_matches,
+        "ra": _first("ra"),
+        "dec": _first("dec"),
+        "tmag": _first("st_tmag"),
+        "teff": _first("st_teff"),
+        "srad": _first("st_rad"),
+        "dist_pc": _first("st_dist"),
         "summary": headline,
         "source": source,
     }
