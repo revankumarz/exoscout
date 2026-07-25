@@ -1,0 +1,11 @@
+[project]
+name = "exoscout"
+version = "0.1.0"
+description = "Autonomous TESS candidate triage & follow-up planning agent"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+# Put the repo root on sys.path so `import exoscout` works when pytest runs as a
+# console script (e.g. in CI), not just via `python -m pytest`.
+pythonpath = ["."]
+testpaths = ["tests"]
