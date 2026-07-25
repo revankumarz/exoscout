@@ -10,20 +10,30 @@ heavy compute lives in deterministic tools; a small LLM orchestrates.
 
 ## What it does
 
-A triage loop with a Streamlit UI, manually orchestrated for now:
+Six deterministic tools, an LLM agent that orchestrates them, a provenance log,
+persistent memory, an exportable observing brief, and an evaluation harness.
 
-1. **Light-curve tool** (`exoscout/tools/lightcurve.py`) - fetches a TESS light
-   curve via Lightkurve/MAST, cleans and flattens it, runs a Box Least Squares
-   (BLS) transit search, and phase-folds at the best period.
-2. **Vetting tool** (`exoscout/tools/vetting.py`) - odd/even depth, secondary
-   eclipse, and depth-SNR checks to catch eclipsing binaries and noise. The
-   transit-vetting CNN plugs in here via a `cnn_score` hook.
-3. **Archive tool** (`exoscout/tools/archive.py`) - queries the NASA Exoplanet
-   Archive TAP service (TOI + confirmed-planet tables) to answer
-   *"is this candidate already known?"* with a TFOPWG disposition.
+**Tools** (`exoscout/tools/`)
 
-Every tool call is written to a **provenance log** so each claim in the verdict
-traces back to a tool output.
+1. **lightcurve** - fetch a TESS light curve (Lightkurve/MAST), clean/flatten,
+   run a Box Least Squares transit search, phase-fold at the best period.
+2. **vetting** - odd/even depth, secondary eclipse, depth-SNR checks to catch
+   eclipsing binaries and noise. The transit-vetting CNN plugs in via `cnn_score`.
+3. **archive** - NASA Exoplanet Archive TAP (TOI + confirmed tables): *"is this
+   already known?"* plus coordinates and stellar parameters.
+4. **stellar** - SIMBAD object-type lookup (catches known eclipsing binaries).
+5. **literature** - arXiv (+ ADS if a token is set): *"has anyone published on it?"*
+6. **planning** - astroplan observability across observatories over the next N
+   nights (altitude / airmass / darkness / moon separation).
+
+**Around the tools**
+
+- **Provenance log** - every claim traces back to a tool output.
+- **Observing brief** (`exoscout/brief.py`) - one-page Markdown deliverable.
+- **Memory** (`exoscout/store.py`) - SQLite log of every triage.
+- **Evaluation** (`evaluate.py`) - novelty-classifier accuracy on a labeled TOI
+  set (`data/labeled_tois.csv`). Currently 100% known/confirmed on the set.
+- **Tests** (`tests/`) - offline pytest suite: `pytest -q`.
 
 ### Agent layer (`exoscout/agent/`)
 
@@ -47,10 +57,9 @@ EXOSCOUT_LLM_API_KEY    default "ollama" (use a real key for hosted APIs)
 
 ## Roadmap
 
-- Split into orchestrator + specialist agents with memory across targets.
-- astroplan follow-up planning + one-page observing brief.
-- Evaluation: tool-call success rate, novelty accuracy vs. held-out TOIs,
-  hallucination checks.
+- Split into orchestrator + specialist sub-agents.
+- Wire in the real transit-vetting CNN via the `cnn_score` hook.
+- Expand the evaluation set (false positives, hallucination checks per claim).
 
 ## Setup
 

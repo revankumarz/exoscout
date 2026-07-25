@@ -1,0 +1,8 @@
+target,expected_known,expected_confirmed,note
+TOI 700.01,1,1,confirmed habitable-zone system
+TOI 270.01,1,1,confirmed multi-planet M dwarf
+TOI 1338.01,1,1,confirmed circumbinary planet
+TOI 849.01,1,1,confirmed hot Neptune desert planet
+TOI 175.01,1,1,confirmed (L 98-59) system
+TIC 999999999,0,0,nonexistent id - should not be known
+TIC 888888888,0,0,nonexistent id - should not be known

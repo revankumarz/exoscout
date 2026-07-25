@@ -5,8 +5,8 @@ __pycache__/
 venv/
 env/
 
-# Data caches / downloads
-data/
+# Data caches / downloads (keep labeled_tois.csv, ignore the DB + downloads)
+data/*.db
 mastDownload/
 *.fits
 .exoscout_cache/
