@@ -15,11 +15,14 @@ from __future__ import annotations
 import numpy as np
 
 
-def fetch_and_search(search_string: str, max_period: float = 15.0) -> dict:
+def fetch_and_search(search_string: str, max_period: float = 15.0,
+                     max_sectors: int | None = None) -> dict:
     """Fetch a TESS light curve and run a BLS transit search.
 
-    Returns keys: ok, error, source, sector_count, n_points, period, t0,
-    depth, duration, depth_ppm, snr, phase, phase_flux, time, flux.
+    ``max_sectors`` caps how many sectors to download (useful for fast demos;
+    None = all available). Returns keys: ok, error, source, sector_count,
+    n_points, period, t0, depth, duration, depth_ppm, snr, phase, phase_flux,
+    time, flux.
     """
     source = "MAST / Lightkurve (TESS)"
     try:
@@ -37,6 +40,8 @@ def fetch_and_search(search_string: str, max_period: float = 15.0) -> dict:
             }
 
         # Prefer short-cadence SPOC/QLP products; just take what is available.
+        if max_sectors is not None and len(search) > max_sectors:
+            search = search[:max_sectors]
         collection = search.download_all()
         if collection is None or len(collection) == 0:
             return {"ok": False, "error": "Download returned no data.", "source": source}

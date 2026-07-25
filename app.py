@@ -34,7 +34,12 @@ with st.sidebar:
     raw = st.text_input("TOI or TIC id", value="TOI 700.01",
                         help="e.g. 'TOI 700.01', 'TIC 150428135', or a bare TIC number")
     max_period = st.slider("Max BLS period (days)", 1.0, 30.0, 15.0, 0.5)
-    run = st.button("Run triage", type="primary", use_container_width=True)
+    max_sectors = st.number_input("Max sectors (0 = all)", 0, 200, 4, 1,
+                                  help="Cap sectors downloaded; keeps demos fast.")
+    run = st.button("Run triage (pipeline)", type="primary", use_container_width=True)
+    run_agent_btn = st.button("Run as agent 🤖", use_container_width=True,
+                              help="LLM decides which tools to call (falls back to a "
+                                   "deterministic planner if no LLM is reachable).")
     st.markdown("---")
     st.caption("All data via free public APIs. No credentials required.")
 
@@ -198,5 +203,41 @@ if run:
     st.markdown("### Provenance log")
     st.caption("Every claim above traces to one of these tool calls.")
     st.dataframe(prov.as_rows(), use_container_width=True, hide_index=True)
+
+elif run_agent_btn:
+    from exoscout.agent.llm import LLMClient
+    from exoscout.agent.orchestrator import run_agent
+
+    target = parse_target(raw)
+    st.subheader(f"🤖 Agent triage: {target.label}")
+    client = LLMClient()
+    reachable = client.available()
+    st.caption(f"LLM: {client.cfg.describe()} - "
+               + ("reachable, running ReAct loop." if reachable
+                  else "unreachable, using deterministic planner."))
+
+    with st.spinner("Agent reasoning and calling tools..."):
+        ctx = run_agent(raw, max_period=max_period, client=client,
+                        max_sectors=(int(max_sectors) or None))
+
+    st.markdown("### Reasoning trace")
+    for step in ctx.trace:
+        label = step["tool"] or step["kind"]
+        if step["kind"] == "tool":
+            ok = step["data"].get("ok")
+            (st.success if ok else st.warning)(f"**{label}** - {step['text'][:300]}")
+        elif step["kind"] == "verdict":
+            st.info(f"**Agent verdict:** {step['text'][:1200]}")
+        else:
+            st.write(f"_{step['text']}_")
+
+    if ctx.full.get("verdict"):
+        st.markdown("### Verdict (rule-based cross-check)")
+        st.json(ctx.full["verdict"])
+
+    st.markdown("### Provenance log")
+    st.dataframe(ctx.prov.as_rows(), use_container_width=True, hide_index=True)
+
 else:
-    st.info("Enter a target in the sidebar and click **Run triage**.")
+    st.info("Enter a target in the sidebar, then **Run triage** (fixed pipeline) "
+            "or **Run as agent** (LLM picks the tools).")

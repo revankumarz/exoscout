@@ -25,12 +25,29 @@ A triage loop with a Streamlit UI, manually orchestrated for now:
 Every tool call is written to a **provenance log** so each claim in the verdict
 traces back to a tool output.
 
+### Agent layer (`exoscout/agent/`)
+
+An LLM orchestrator turns the four tools into an agentic loop: the model decides
+which tool to call, reacts to each result, and writes the final verdict. It is
+**LLM-optional** - with an OpenAI-compatible endpoint it runs a ReAct loop;
+without one it falls back to a deterministic planner, so it always runs.
+
+```bash
+python agent_cli.py "TOI 700.01"                 # LLM if available
+python agent_cli.py "TIC 150428135" --deterministic
+```
+
+LLM config (env vars, all optional):
+
+```
+EXOSCOUT_LLM_BASE_URL   default http://localhost:11434/v1   (local Ollama)
+EXOSCOUT_LLM_MODEL      default llama3.2
+EXOSCOUT_LLM_API_KEY    default "ollama" (use a real key for hosted APIs)
+```
+
 ## Roadmap
 
-- Literature novelty check over ADS + arXiv.
-- Single-agent ReAct loop replacing the manual control flow, with memory.
-- Split into orchestrator + specialist agents (Data / Vetting / Archive /
-  Literature / Planning).
+- Split into orchestrator + specialist agents with memory across targets.
 - astroplan follow-up planning + one-page observing brief.
 - Evaluation: tool-call success rate, novelty accuracy vs. held-out TOIs,
   hallucination checks.
