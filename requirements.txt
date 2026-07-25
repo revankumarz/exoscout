@@ -5,3 +5,6 @@ requests>=2.31
 matplotlib>=3.8
 numpy
 pandas
+astroplan>=0.10
+torch>=2.2
+scikit-learn>=1.3

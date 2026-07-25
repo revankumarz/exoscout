@@ -64,6 +64,13 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
     # SIMBAD calling it a binary/variable is a strong false-positive signal.
     if stel.get("eclipsing_binary_flag"):
         fp_risk = "high"
+    # AstroNet CNN score, when available, sharpens the risk call.
+    cnn = vet.get("cnn_score") if vet.get("ok") else None
+    if cnn is not None:
+        if cnn < 0.3 and fp_risk != "high":
+            fp_risk = "high"
+        elif cnn > 0.7 and fp_risk == "medium":
+            fp_risk = "low"
 
     if arch.get("confirmed"):
         novelty = "confirmed / known planet"

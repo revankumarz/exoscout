@@ -84,7 +84,8 @@ if run:
     # ---- Tool 2: vetting diagnostics -----------------------------------------
     vet = {}
     if lc.get("ok"):
-        vet = vetting.run_vetting(lc)
+        from exoscout.ml.infer import cnn_score as _cnn_score
+        vet = vetting.run_vetting(lc, cnn_score=_cnn_score)
         prov.record(
             "vetting.run_vetting",
             vet.get("error") or vet.get("summary", ""),
@@ -94,10 +95,12 @@ if run:
         with col_lc:
             st.markdown("#### Vetting")
             if vet.get("ok"):
-                v1, v2, v3 = st.columns(3)
+                v1, v2, v3, v4 = st.columns(4)
                 v1.metric("Odd/even Δ (σ)", vet["oddeven_sigma"] if vet["oddeven_sigma"] is not None else "n/a")
                 v2.metric("Secondary (σ)", vet["secondary_sigma"] if vet["secondary_sigma"] is not None else "n/a")
                 v3.metric("Depth SNR", vet["depth_snr"] if vet["depth_snr"] is not None else "n/a")
+                cnn = vet.get("cnn_score")
+                v4.metric("CNN P(planet)", f"{cnn:.2f}" if cnn is not None else "n/a")
                 if "PASSES" in vet["summary"]:
                     st.success(vet["summary"])
                 elif "WEAK" in vet["summary"]:

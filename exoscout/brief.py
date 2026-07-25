@@ -67,6 +67,8 @@ def build_brief(ctx: AgentContext) -> str:
     lines += ["", "## Vetting"]
     if vet.get("ok"):
         lines.append(f"- {vet.get('summary')}")
+        if vet.get("cnn_score") is not None:
+            lines.append(f"- AstroNet CNN: P(planet) = {_fmt(vet.get('cnn_score'))}")
         for fl in vet.get("flags", []):
             lines.append(f"  - {fl}")
     else:

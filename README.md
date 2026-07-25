@@ -60,6 +60,20 @@ persistent memory, an exportable observing brief, and an evaluation harness.
 
 **Around the tools**
 
+**Transit-vetting CNN** (`exoscout/ml/`)
+
+An **AstroNet-style dual-view 1D CNN** (Shallue & Vanderburg 2018) trained on
+real TESS data - confirmed planets vs. TFOPWG false positives. Global + local
+phase-folded views feed two convolutional columns; the output P(planet) enters
+the vetting tool through the `cnn_score` hook and sharpens the verdict.
+
+```bash
+python -m exoscout.ml.build_dataset --per-class 80   # build labeled set from MAST
+python -m exoscout.ml.train --epochs 40              # train, save models/astronet.pt
+```
+
+**Around the tools**
+
 - **Provenance log** - every claim traces back to a tool output.
 - **Observing brief** (`exoscout/brief.py`) - one-page Markdown deliverable.
 - **Memory** (`exoscout/store.py`) - SQLite log of every triage.
