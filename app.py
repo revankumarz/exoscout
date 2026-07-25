@@ -17,7 +17,7 @@ import streamlit as st
 
 from exoscout.target import parse_target
 from exoscout.provenance import Provenance
-from exoscout.tools import archive, lightcurve, vetting
+from exoscout.tools import archive, lightcurve, literature, vetting
 
 st.set_page_config(page_title="ExoScout", page_icon="🔭", layout="wide")
 
@@ -25,7 +25,8 @@ st.title("🔭 ExoScout")
 st.caption(
     "Autonomous TESS candidate triage. "
     "Tools: light-curve search (Lightkurve/MAST), transit vetting "
-    "(odd/even, secondary, SNR), and novelty check (NASA Exoplanet Archive)."
+    "(odd/even, secondary, SNR), archive novelty check (NASA Exoplanet Archive), "
+    "and literature check (arXiv + ADS)."
 )
 
 with st.sidebar:
@@ -135,12 +136,43 @@ if run:
         else:
             st.error(arch.get("error", "Archive step failed."))
 
+    # ---- Tool 4: literature novelty check ------------------------------------
+    st.markdown("---")
+    st.markdown("### 4 - Literature check (has anyone published on it?)")
+    with st.spinner("Searching arXiv (and ADS if a token is set)..."):
+        litr = literature.check_novelty(tic_id=target.tic_id, toi=target.toi)
+    prov.record(
+        "literature.check_novelty",
+        litr.get("summary", ""),
+        litr.get("source", ""),
+        ok=litr.get("ok", False),
+    )
+    if litr.get("ok"):
+        if litr["n_matches"] == 0:
+            st.success(litr["summary"])
+        else:
+            st.warning(litr["summary"])
+        st.caption(f"Search terms: {', '.join(litr['terms'])}")
+        hits = litr["arxiv"].get("hits", []) + litr["ads"].get("hits", [])
+        if hits:
+            st.dataframe(
+                [{"date": h["published"], "title": h["title"], "authors": h["authors"], "link": h["url"]}
+                 for h in hits],
+                use_container_width=True, hide_index=True,
+            )
+        if litr["ads"].get("skipped"):
+            st.caption("ADS skipped - set the ADS_TOKEN environment variable to include it.")
+    else:
+        st.error("Literature search unavailable.")
+
     # ---- Verdict -------------------------------------------------------------
     st.markdown("---")
     st.markdown("### Verdict (decision-support - human in the loop)")
     if vet.get("ok"):
         st.write(f"**Vetting:** {vet['summary']}"
                  + (f" - {'; '.join(vet['flags'])}" if vet.get("flags") else ""))
+    if litr.get("ok"):
+        st.write(f"**Literature:** {litr['summary']}")
     if arch.get("ok"):
         if arch["confirmed"]:
             st.info("This target maps to a **confirmed / known planet**. Low novelty - "
@@ -152,8 +184,13 @@ if run:
             st.info("An **existing TOI candidate** - not novel, but still an active "
                     "candidate worth following up.")
         else:
-            st.info("**Not found** in the TOI or confirmed tables. Potentially novel - "
-                    "warrants literature check (next-week agent step) before any claim.")
+            novel_lit = litr.get("ok") and litr.get("n_matches", 0) == 0
+            if novel_lit:
+                st.info("**Not in the archives and no literature matches** - potentially "
+                        "novel. Good follow-up target (verify before any claim).")
+            else:
+                st.info("**Not found** in the TOI or confirmed tables, but the literature "
+                        "mentions it - lower novelty than it first appears.")
     else:
         st.info("Archive check unavailable; cannot assess novelty this run.")
 
