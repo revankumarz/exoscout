@@ -7,9 +7,13 @@ env/
 
 # Data caches / downloads (keep labeled_tois.csv, ignore the DB + downloads)
 data/*.db
+data/*.npz
 mastDownload/
 *.fits
 .exoscout_cache/
+
+# Trained model weights (reproducible via exoscout/ml/train.py). Keep metrics.
+models/*.pt
 
 # Streamlit
 .streamlit/secrets.toml

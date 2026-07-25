@@ -33,7 +33,8 @@ def _t_vet_transit(ctx: AgentContext) -> dict:
     lc = ctx.full.get("lightcurve")
     if not lc or not lc.get("ok"):
         return {"ok": False, "error": "Run fetch_lightcurve first."}
-    res = vetting.run_vetting(lc)
+    from exoscout.ml.infer import cnn_score
+    res = vetting.run_vetting(lc, cnn_score=cnn_score)
     ctx.store("vetting", res)
     ctx.prov.record("vetting.run_vetting", res.get("error") or res.get("summary", ""),
                     res.get("source", ""), ok=res.get("ok", False))
@@ -41,7 +42,7 @@ def _t_vet_transit(ctx: AgentContext) -> dict:
         return {"ok": False, "error": res.get("error")}
     return {"ok": True, "verdict": res["summary"], "oddeven_sigma": res["oddeven_sigma"],
             "secondary_sigma": res["secondary_sigma"], "depth_snr": res["depth_snr"],
-            "flags": res["flags"]}
+            "cnn_score": res.get("cnn_score"), "flags": res["flags"]}
 
 
 def _t_archive_check(ctx: AgentContext) -> dict:
