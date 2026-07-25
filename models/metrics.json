@@ -1,0 +1,9 @@
+{
+  "n_train": 585,
+  "n_val": 147,
+  "accuracy": 0.735,
+  "precision": 0.704,
+  "recall": 0.873,
+  "f1": 0.78,
+  "roc_auc": 0.8
+}

@@ -67,9 +67,19 @@ real TESS data - confirmed planets vs. TFOPWG false positives. Global + local
 phase-folded views feed two convolutional columns; the output P(planet) enters
 the vetting tool through the `cnn_score` hook and sharpens the verdict.
 
+Trained on 732 real TESS light curves (585 train / 147 validation):
+
+| accuracy | precision | recall | F1 | ROC-AUC |
+|---|---|---|---|---|
+| 0.74 | 0.70 | 0.87 | 0.78 | **0.80** |
+
+It adds real signal on top of the rule-based checks: e.g. on a single sector of
+the confirmed planet TOI-700 the classic depth-SNR test reads "inconclusive"
+while the CNN scores P(planet) = 0.97.
+
 ```bash
-python -m exoscout.ml.build_dataset --per-class 80   # build labeled set from MAST
-python -m exoscout.ml.train --epochs 40              # train, save models/astronet.pt
+python -m exoscout.ml.build_dataset --per-class 400  # build labeled set from MAST
+python -m exoscout.ml.train --epochs 60              # train, save models/astronet.pt
 ```
 
 **Around the tools**
