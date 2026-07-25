@@ -235,8 +235,31 @@ elif run_agent_btn:
         st.markdown("### Verdict (rule-based cross-check)")
         st.json(ctx.full["verdict"])
 
+    # Follow-up plan table
+    plan = ctx.full.get("planning", {})
+    if plan.get("ok"):
+        st.markdown("### Follow-up plan")
+        st.caption(plan["summary"])
+        st.dataframe(plan["observatories"], use_container_width=True, hide_index=True)
+
+    # One-page observing brief (exportable)
+    from exoscout.brief import build_brief
+    md = build_brief(ctx)
+    st.markdown("### Observing brief")
+    with st.expander("Show / download brief", expanded=False):
+        st.markdown(md)
+    st.download_button("Download brief (.md)", md,
+                       file_name=f"{ctx.target.label.replace(' ', '_')}_brief.md")
+
     st.markdown("### Provenance log")
     st.dataframe(ctx.prov.as_rows(), use_container_width=True, hide_index=True)
+
+    # Memory: past triages
+    from exoscout import store
+    hist = store.recent(10)
+    if hist:
+        st.markdown("### Recent triages (memory)")
+        st.dataframe(hist, use_container_width=True, hide_index=True)
 
 else:
     st.info("Enter a target in the sidebar, then **Run triage** (fixed pipeline) "
