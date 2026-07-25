@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import exoscout.cache as cache
 import exoscout.store as store
 from exoscout.agent import tools as agent_tools
 from exoscout.agent.context import AgentContext
@@ -94,3 +95,14 @@ def test_store_roundtrip(tmp_path, monkeypatch):
     rows = store.recent()
     assert rows and rows[0]["target"] == "TOI 700.01"
     assert store.times_seen("TOI 700.01") == 1
+
+
+# ---- cache -----------------------------------------------------------------
+def test_cache_roundtrip_and_ttl(tmp_path, monkeypatch):
+    monkeypatch.setattr(cache, "CACHE_DIR", str(tmp_path))
+    cache.put("ns", "key1", {"a": 1})
+    assert cache.get("ns", "key1", ttl_seconds=100) == {"a": 1}
+    # Expired entries are ignored.
+    assert cache.get("ns", "key1", ttl_seconds=-1) is None
+    # Missing keys return None.
+    assert cache.get("ns", "missing", ttl_seconds=100) is None

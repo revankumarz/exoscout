@@ -18,8 +18,11 @@ import io
 import requests
 import pandas as pd
 
+from exoscout import cache
+
 TAP_URL = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
 TIMEOUT = 45
+CACHE_TTL = 24 * 3600  # archive dispositions change slowly; cache for a day
 
 # TFOPWG disposition codes -> human meaning.
 DISP_MEANING = {
@@ -34,7 +37,14 @@ DISP_MEANING = {
 
 
 def _tap_query(adql: str) -> pd.DataFrame:
-    """Run a synchronous ADQL query, return a DataFrame (may be empty)."""
+    """Run a synchronous ADQL query, return a DataFrame (may be empty).
+
+    Cached by query text for a day to respect the service and speed repeats.
+    """
+    cached = cache.get("tap", adql, CACHE_TTL)
+    if cached is not None:
+        return pd.read_csv(io.StringIO(cached)) if cached.strip() else pd.DataFrame()
+
     r = requests.get(
         TAP_URL,
         params={"query": adql, "format": "csv"},
@@ -43,6 +53,7 @@ def _tap_query(adql: str) -> pd.DataFrame:
     )
     r.raise_for_status()
     text = r.text.strip()
+    cache.put("tap", adql, text)
     if not text:
         return pd.DataFrame()
     return pd.read_csv(io.StringIO(text))

@@ -20,7 +20,10 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+from exoscout import cache
+
 ARXIV_URL = "http://export.arxiv.org/api/query"
+ARXIV_TTL = 12 * 3600
 ADS_URL = "https://api.adsabs.harvard.edu/v1/search/query"
 TIMEOUT = 30
 _ATOM = "{http://www.w3.org/2005/Atom}"
@@ -53,28 +56,32 @@ def search_arxiv(query_terms: list[str], max_results: int = 8) -> dict:
         return {"ok": True, "hits": [], "source": source, "query": ""}
 
     search_query = " OR ".join(f"all:{t}" for t in query_terms)
-
-    # Throttle.
-    wait = 3.0 - (time.time() - _last_arxiv_call)
-    if wait > 0:
-        time.sleep(wait)
+    cache_key = f"{search_query}|{max_results}"
 
     try:
-        r = requests.get(
-            ARXIV_URL,
-            params={
-                "search_query": search_query,
-                "start": 0,
-                "max_results": max_results,
-                "sortBy": "relevance",
-                "sortOrder": "descending",
-            },
-            timeout=TIMEOUT,
-            headers={"User-Agent": "ExoScout/0.1 (portfolio project)"},
-        )
-        _last_arxiv_call = time.time()
-        r.raise_for_status()
-        root = ET.fromstring(r.text)
+        xml = cache.get("arxiv", cache_key, ARXIV_TTL)
+        if xml is None:
+            # Throttle only on a real network call (honours arXiv's 1/3 s rule).
+            wait = 3.0 - (time.time() - _last_arxiv_call)
+            if wait > 0:
+                time.sleep(wait)
+            r = requests.get(
+                ARXIV_URL,
+                params={
+                    "search_query": search_query,
+                    "start": 0,
+                    "max_results": max_results,
+                    "sortBy": "relevance",
+                    "sortOrder": "descending",
+                },
+                timeout=TIMEOUT,
+                headers={"User-Agent": "ExoScout/0.1 (portfolio project)"},
+            )
+            _last_arxiv_call = time.time()
+            r.raise_for_status()
+            xml = r.text
+            cache.put("arxiv", cache_key, xml)
+        root = ET.fromstring(xml)
 
         hits = []
         for entry in root.findall(f"{_ATOM}entry"):
