@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 import numpy as np
+import pytest
 
 import exoscout.cache as cache
 import exoscout.store as store
@@ -122,6 +123,20 @@ def test_vetting_catches_odd_even_mismatch():
     r = run_vetting(_synth_lc(odd_extra=5e-4))
     assert r["oddeven_sigma"] > 3.0
     assert "FALSE POSITIVE" in r["summary"]
+
+
+def test_vetting_distinguishes_a_period_alias_from_a_binary():
+    """A real transit folded at half its true period puts transits on one
+    parity only. That is a wrong ephemeris, not an eclipsing binary - the
+    live TOI 700.01 run tripped over exactly this."""
+    # A 1000 ppm transit on every epoch, cancelled again on the odd ones:
+    # even transits are real, odd ones are bare baseline.
+    lc = _synth_lc(depth=1e-3, odd_extra=-1e-3)
+    r = run_vetting(lc)
+    assert r["alias_suspected"] is True
+    assert "ALIAS" in r["summary"]
+    assert "FALSE POSITIVE" not in r["summary"]
+    assert r["suggested_period"] == pytest.approx(2 * lc["period"])
 
 
 def test_vetting_catches_secondary_eclipse():

@@ -65,6 +65,12 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
     elif "FALSE POSITIVE" in vet.get("summary", ""):
         transit_real = "no"
         reasons.append(f"Vetting: {vet['summary']} ({'; '.join(vet.get('flags', []))}).")
+    elif vet.get("alias_suspected"):
+        # A real transit folded at half its true period - not a false positive.
+        transit_real = "unclear"
+        reasons.append(
+            f"Transits appear on only one parity: the BLS period is likely half the "
+            f"true one. Re-run at {vet.get('suggested_period'):.4f} d before judging.")
     elif "WEAK" in vet.get("summary", ""):
         transit_real = "unclear"
         reasons.append(f"Vetting: weak signal (depth SNR {vet.get('depth_snr')}).")
@@ -76,6 +82,8 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
     # ---- false-positive risk ------------------------------------------------
     if not vet.get("ok"):
         fp_risk = "unknown"
+    elif vet.get("alias_suspected"):
+        fp_risk = "medium"          # the ephemeris is wrong, not the signal
     elif vet.get("flags"):
         fp_risk = "high"
     elif "PASSES" in vet.get("summary", ""):
@@ -127,7 +135,10 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
 
     # ---- recommendation -----------------------------------------------------
     where = f" Best placed at {plan['best']}." if plan.get("ok") and plan.get("best") else ""
-    if novelty.startswith("novel") and fp_risk == "low" and transit_real == "yes":
+    if vet.get("alias_suspected"):
+        rec = (f"Re-run the transit search at {vet.get('suggested_period'):.4f} d - the "
+               "current period looks like a half-period alias.")
+    elif novelty.startswith("novel") and fp_risk == "low" and transit_real == "yes":
         rec = "Strong follow-up target - schedule ground-based confirmation." + where
     elif fp_risk == "high":
         rec = "Likely false positive - deprioritise unless re-vetted."

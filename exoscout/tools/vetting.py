@@ -21,10 +21,33 @@ import numpy as np
 ODDEVEN_SIGMA_CUT = 3.0
 SECONDARY_SIGMA_CUT = 3.0
 DEPTH_SNR_CUT = 7.1  # TESS SPOC transit-detection threshold
+# Below this fraction of the deeper parity's depth, the shallow parity is
+# treated as containing no transit at all (period-alias signature).
+ALIAS_DEPTH_FRACTION = 0.25
 
 
 def _in_transit_mask(phase: np.ndarray, half_window: float) -> np.ndarray:
     return np.abs(phase) < half_window
+
+
+def _per_transit_depths(flux: np.ndarray, baseline: float, in_tr: np.ndarray,
+                        epoch: np.ndarray, parity: int, min_points: int = 3) -> np.ndarray:
+    """Depth measured separately in each individual transit of one parity."""
+    sel = in_tr & (epoch % 2 == parity)
+    depths = []
+    for e in np.unique(epoch[sel]):
+        pts = flux[sel & (epoch == e)]
+        pts = pts[np.isfinite(pts)]
+        if pts.size >= min_points:
+            depths.append(baseline - float(np.mean(pts)))
+    return np.asarray(depths, dtype=float)
+
+
+def _sem(values: np.ndarray, min_n: int = 3) -> float:
+    """Standard error of the mean from empirical scatter; 0 if too few points."""
+    if values.size < min_n:
+        return 0.0
+    return float(np.std(values, ddof=1) / np.sqrt(values.size))
 
 
 def _robust_sigma(x: np.ndarray) -> float:
@@ -91,11 +114,19 @@ def run_vetting(lc: dict, cnn_score=None) -> dict:
         even_depth, even_err, n_even = depth_of(in_tr & (epoch % 2 == 0))
         full_depth, full_err, n_in = depth_of(in_tr)
 
-        # Odd/even difference in units of its own uncertainty -> EB indicator.
-        # The error on the difference propagates from both windows; using the
-        # per-point scatter here would understate it by ~sqrt(N) and hide EBs.
+        # Per-transit depths: the spread between individual transits is the
+        # honest error bar for the odd/even test. A white-noise error would
+        # ignore red noise and ephemeris error, and a slightly-wrong BLS period
+        # alone is then enough to fake an eclipsing binary at many sigma.
+        odd_depths = _per_transit_depths(flux, baseline, in_tr, epoch, 1)
+        even_depths = _per_transit_depths(flux, baseline, in_tr, epoch, 0)
+
         if np.isfinite(odd_depth) and np.isfinite(even_depth):
-            diff_err = np.hypot(odd_err, even_err)
+            # Use the empirical scatter where there are enough transits to
+            # measure it, but never claim to be more precise than white noise.
+            odd_sem = max(_sem(odd_depths), odd_err)
+            even_sem = max(_sem(even_depths), even_err)
+            diff_err = np.hypot(odd_sem, even_sem)
             oddeven_sigma = abs(odd_depth - even_depth) / (diff_err + 1e-12)
         else:
             oddeven_sigma = np.nan
@@ -118,9 +149,28 @@ def run_vetting(lc: dict, cnn_score=None) -> dict:
         has_secondary = bool(np.isfinite(secondary_sigma) and secondary_sigma > SECONDARY_SIGMA_CUT)
         weak_signal = bool(not np.isfinite(depth_snr) or depth_snr < DEPTH_SNR_CUT)
 
+        # An odd/even mismatch has two very different causes. An eclipsing
+        # binary shows *two* eclipses of unequal depth; a BLS period alias
+        # (folding at half the true period) puts real transits on one parity
+        # and bare baseline on the other. Distinguish them by asking whether
+        # the shallower parity contains a transit at all - if it does not, the
+        # signal is a real transit at twice this period, not a binary.
+        alias_suspected = False
+        if likely_eb:
+            if odd_depth >= even_depth:
+                deep, shallow, shallow_err = odd_depth, even_depth, even_sem
+            else:
+                deep, shallow, shallow_err = even_depth, odd_depth, odd_sem
+            shallow_snr = shallow / (shallow_err + 1e-12)
+            if deep > 0 and shallow_snr < 3.0 and shallow < ALIAS_DEPTH_FRACTION * deep:
+                alias_suspected, likely_eb = True, False
+
         flags = []
         if likely_eb:
             flags.append("odd/even depth mismatch (eclipsing-binary risk)")
+        if alias_suspected:
+            flags.append("only one parity of transits is deep - the BLS period is "
+                         "probably half the true period; re-run at 2x the period")
         if has_secondary:
             flags.append("secondary eclipse detected (stellar companion risk)")
         if weak_signal:
@@ -128,6 +178,8 @@ def run_vetting(lc: dict, cnn_score=None) -> dict:
 
         if likely_eb or has_secondary:
             headline = "LIKELY FALSE POSITIVE (astrophysical)"
+        elif alias_suspected:
+            headline = "PERIOD ALIAS SUSPECTED (re-run at 2x the period)"
         elif weak_signal:
             headline = "WEAK / INCONCLUSIVE signal"
         else:
@@ -150,6 +202,10 @@ def run_vetting(lc: dict, cnn_score=None) -> dict:
             "n_secondary": n_sec,
             "n_odd": n_odd,
             "n_even": n_even,
+            "n_odd_transits": int(odd_depths.size),
+            "n_even_transits": int(even_depths.size),
+            "alias_suspected": alias_suspected,
+            "suggested_period": (2.0 * period) if alias_suspected else None,
             "flags": flags,
             "summary": headline,
         }
