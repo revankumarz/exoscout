@@ -9,6 +9,7 @@ import numpy as np
 import exoscout.cache as cache
 import exoscout.store as store
 from exoscout.agent import tools as agent_tools
+from exoscout.agent import orchestrator
 from exoscout.agent.context import AgentContext
 from exoscout.agent.orchestrator import _synthesize_verdict
 from exoscout.brief import build_brief
@@ -48,6 +49,42 @@ def test_unknown_tool_is_safe():
     ctx = AgentContext(target=parse_target("TOI 1.01"))
     out = agent_tools.call_tool("does_not_exist", ctx, {})
     assert out["ok"] is False
+
+
+def test_repeated_tool_calls_are_memoised(monkeypatch):
+    """fetch_lightcurve re-downloads every TESS sector and is not disk-cached,
+    so a model that repeats itself must not pay for it twice."""
+    seen = []
+
+    def counting(ctx, n=1):
+        seen.append(n)
+        return {"ok": True, "n": n}
+
+    monkeypatch.setitem(agent_tools._REGISTRY, "counting", (counting, {}))
+    ctx = AgentContext(target=parse_target("TOI 1.01"))
+
+    first = agent_tools.call_tool("counting", ctx, {})
+    again = agent_tools.call_tool("counting", ctx, {})
+    assert len(seen) == 1                      # the tool ran only once
+    assert again["cached"] is True and again["n"] == first["n"]
+
+    agent_tools.call_tool("counting", ctx, {"n": 2})
+    assert len(seen) == 2                      # different args = a real call
+
+
+def test_failed_tool_calls_are_retried(monkeypatch):
+    """A transient failure must not be cached as if it were an answer."""
+    seen = []
+
+    def flaky(ctx):
+        seen.append(1)
+        return {"ok": False, "error": "timeout"}
+
+    monkeypatch.setitem(agent_tools._REGISTRY, "flaky", (flaky, {}))
+    ctx = AgentContext(target=parse_target("TOI 1.01"))
+    agent_tools.call_tool("flaky", ctx, {})
+    agent_tools.call_tool("flaky", ctx, {})
+    assert len(seen) == 2
 
 
 # ---- vetting on synthetic light curves --------------------------------------
@@ -187,6 +224,54 @@ def test_verdict_is_unknown_without_vetting():
 def test_verdict_reasons_are_populated():
     v = _synthesize_verdict(_fake_ctx())
     assert v["reasons"] and all(isinstance(r, str) for r in v["reasons"])
+
+
+# ---- agent loop (fake LLM, no network) -------------------------------------
+class _StubLLM:
+    """An LLM that never stops calling tools - the pathological case."""
+
+    def __init__(self):
+        self.cfg = type("cfg", (), {"describe": staticmethod(lambda: "stub")})()
+        self.no_tool_calls = 0
+
+    def available(self, timeout: float = 2.0):
+        return True
+
+    def chat(self, messages, tools=None, timeout: float = 120.0):
+        if tools is None:            # the forced final-brief call
+            self.no_tool_calls += 1
+            return {"content": "FINAL BRIEF", "tool_calls": [], "raw": {}}
+        return {"content": None, "raw": {"role": "assistant"}, "tool_calls": [
+            {"id": "1", "function": {"name": "stub_tool", "arguments": "{}"}}]}
+
+
+def test_agent_forces_a_brief_when_out_of_steps(monkeypatch):
+    """Regression: exhausting max_steps used to end the run with no brief."""
+    monkeypatch.setitem(agent_tools._REGISTRY,
+                        "stub_tool", (lambda ctx: {"ok": True}, {}))
+    monkeypatch.setattr(store, "save_triage", lambda ctx: True)
+
+    llm = _StubLLM()
+    ctx = orchestrator.run_agent("TOI 700.01", max_steps=3, client=llm)
+    assert llm.no_tool_calls == 1
+    assert ctx.full["verdict_text"] == "FINAL BRIEF"
+    assert ctx.full["verdict"]["transit_real"] == "unknown"
+
+
+def test_agent_falls_back_when_no_llm(monkeypatch):
+    class Dead(_StubLLM):
+        def available(self, timeout: float = 2.0):
+            return False
+
+    called = {}
+
+    def fake_deterministic(*a, **k):
+        called["hit"] = True
+        return AgentContext(target=parse_target("TOI 700.01"))
+
+    monkeypatch.setattr(orchestrator, "run_deterministic", fake_deterministic)
+    orchestrator.run_agent("TOI 700.01", client=Dead())
+    assert called.get("hit")
 
 
 # ---- brief -----------------------------------------------------------------

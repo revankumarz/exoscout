@@ -206,6 +206,22 @@ def run_agent(target_text: str, max_period: float = 15.0, max_steps: int = 8,
             ctx.log_step("tool", json.dumps(out)[:400], tool=fn, data=out)
             messages.append({"role": "tool", "tool_call_id": tc.get("id", fn),
                              "name": fn, "content": json.dumps(out)})
+    else:
+        # Step budget exhausted while the model was still calling tools. Ask
+        # once more with no tools offered, so the run still ends in a brief
+        # rather than silently producing nothing.
+        ctx.log_step("plan", f"Step budget ({max_steps}) reached - "
+                             "requesting a final brief with tools disabled.")
+        messages.append({"role": "user", "content":
+                         "You are out of tool calls. Write the final brief now from the "
+                         "evidence you already have, and say which checks are missing."})
+        try:
+            resp = client.chat(messages)
+            ctx.log_step("verdict", resp.get("content") or "(no content)")
+            ctx.full["verdict_text"] = resp.get("content")
+        except Exception as e:
+            ctx.log_step("verdict", f"Final LLM call failed ({type(e).__name__}: {e}) - "
+                                    "using the rule-based verdict only.")
 
     # Always attach a rule-based verdict too, as a grounded cross-check.
     ctx.full["verdict"] = _synthesize_verdict(ctx)

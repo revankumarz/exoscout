@@ -19,6 +19,7 @@ class AgentContext:
     max_period: float = 15.0
     max_sectors: int | None = None
     full: dict = field(default_factory=dict)          # tool_name -> full result dict
+    calls: dict = field(default_factory=dict)         # call key -> compact result (memo)
     prov: Provenance = field(default_factory=Provenance)
     trace: list = field(default_factory=list)         # readable step-by-step record
 

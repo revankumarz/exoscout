@@ -9,6 +9,7 @@ Wraps the four deterministic tools as LLM-callable functions. Each tool:
 
 from __future__ import annotations
 
+import json
 from typing import Callable
 
 from exoscout.agent.context import AgentContext
@@ -154,11 +155,32 @@ def tool_schemas() -> list[dict]:
     return [schema for _, schema in _REGISTRY.values()]
 
 
+def _call_key(name: str, args: dict) -> str:
+    return name + "|" + json.dumps(args or {}, sort_keys=True, default=str)
+
+
 def call_tool(name: str, ctx: AgentContext, args: dict) -> dict:
+    """Run a tool, reusing an identical successful call from earlier in the run.
+
+    Small local models happily call ``fetch_lightcurve`` three times in a row;
+    that tool re-downloads every TESS sector from MAST and is not disk-cached,
+    so the memo below is the difference between a snappy triage and a stalled
+    one. Only successful calls are memoised, so a transient failure can retry.
+    """
     if name not in _REGISTRY:
         return {"ok": False, "error": f"Unknown tool '{name}'."}
+
+    key = _call_key(name, args)
+    prev = ctx.calls.get(key)
+    if prev is not None and prev.get("ok"):
+        return {**prev, "cached": True,
+                "note": f"{name} already ran with these arguments; reusing that result. "
+                        "Do not call it again - move on to another tool or write the brief."}
+
     fn, _ = _REGISTRY[name]
     try:
-        return fn(ctx, **(args or {}))
+        out = fn(ctx, **(args or {}))
     except TypeError as e:
         return {"ok": False, "error": f"Bad arguments for {name}: {e}"}
+    ctx.calls[key] = out
+    return out
