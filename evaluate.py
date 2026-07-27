@@ -11,12 +11,10 @@ that measures itself is far more credible than one that just demos.
 from __future__ import annotations
 
 import csv
-import os
 
 from exoscout.tools import archive
 from exoscout.target import parse_target
-
-LABELS = os.path.join(os.path.dirname(__file__), "data", "labeled_tois.csv")
+from exoscout.paths import LABELS_PATH as LABELS
 
 
 def main() -> None:

@@ -13,7 +13,7 @@ import json
 import os
 import time
 
-CACHE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".exoscout_cache"))
+from exoscout.paths import CACHE_DIR
 
 
 def _path(namespace: str, key: str) -> str:

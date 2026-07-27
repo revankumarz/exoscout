@@ -157,7 +157,9 @@ def run_vetting(lc: dict, cnn_score=None) -> dict:
         # Optional CNN classifier hook (the student's model).
         if cnn_score is not None:
             try:
-                result["cnn_score"] = float(cnn_score(lc))
+                score = cnn_score(lc)
+                # None simply means "no model trained yet" - not an error.
+                result["cnn_score"] = None if score is None else float(score)
             except Exception as e:
                 result["cnn_score"] = None
                 result["cnn_error"] = f"{type(e).__name__}: {e}"

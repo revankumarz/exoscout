@@ -11,8 +11,9 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-DB_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
-DB_PATH = os.path.abspath(os.path.join(DB_DIR, "exoscout.db"))
+from exoscout.paths import DATA_DIR, DB_PATH
+
+DB_DIR = DATA_DIR
 
 
 def _connect() -> sqlite3.Connection:

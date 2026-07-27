@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 import exoscout.cache as cache
@@ -100,6 +102,30 @@ def test_vetting_rejects_pure_noise():
 def test_vetting_handles_bad_input():
     assert run_vetting({})["ok"] is False
     assert run_vetting({"ok": False})["ok"] is False
+
+
+def test_vetting_cnn_hook():
+    lc = _synth_lc()
+    # A working classifier is reported as-is...
+    assert run_vetting(lc, cnn_score=lambda _: 0.83)["cnn_score"] == 0.83
+    # ...an untrained model returns None, which is not an error...
+    r = run_vetting(lc, cnn_score=lambda _: None)
+    assert r["cnn_score"] is None and "cnn_error" not in r
+    # ...and a broken one is caught, never crashing the triage.
+    def boom(_):
+        raise RuntimeError("no weights")
+    r = run_vetting(lc, cnn_score=boom)
+    assert r["ok"] and r["cnn_score"] is None and "no weights" in r["cnn_error"]
+
+
+# ---- paths are absolute, not CWD-dependent ---------------------------------
+def test_paths_are_absolute():
+    """Regression: a CWD-relative model path silently disabled the CNN
+    whenever the app was launched from outside the repo root."""
+    from exoscout import paths
+    for p in (paths.DATA_DIR, paths.MODEL_DIR, paths.CACHE_DIR,
+              paths.DB_PATH, paths.MODEL_PATH, paths.LABELS_PATH):
+        assert os.path.isabs(p), p
 
 
 # ---- verdict synthesis (fake evidence, no network) -------------------------

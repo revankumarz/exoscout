@@ -20,6 +20,7 @@ import warnings
 import numpy as np
 
 from exoscout.tools import archive
+from exoscout.paths import TRAINSET_PATH
 from .preprocess import make_views
 from .astronet import GLOBAL_BINS, LOCAL_BINS
 
@@ -103,7 +104,7 @@ def build(per_class: int, out_path: str) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--per-class", type=int, default=80)
-    ap.add_argument("--out", default=os.path.join("data", "trainset.npz"))
+    ap.add_argument("--out", default=TRAINSET_PATH)
     args = ap.parse_args()
     build(args.per_class, args.out)
 

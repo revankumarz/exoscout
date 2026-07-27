@@ -19,9 +19,9 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              roc_auc_score, f1_score)
 from sklearn.model_selection import train_test_split
 
-from .astronet import AstroNet
+from exoscout.paths import MODEL_DIR, MODEL_PATH, METRICS_PATH, TRAINSET_PATH
 
-MODEL_DIR = "models"
+from .astronet import AstroNet
 
 
 def _load(data_path: str):
@@ -89,17 +89,17 @@ def train(data_path: str, epochs: int = 60, batch_size: int = 32, lr: float = 1e
     }
 
     os.makedirs(MODEL_DIR, exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(MODEL_DIR, "astronet.pt"))
-    with open(os.path.join(MODEL_DIR, "metrics.json"), "w") as fh:
+    torch.save(model.state_dict(), MODEL_PATH)
+    with open(METRICS_PATH, "w") as fh:
         json.dump(metrics, fh, indent=2)
     print("Validation metrics:", json.dumps(metrics))
-    print(f"Saved model -> {MODEL_DIR}/astronet.pt")
+    print(f"Saved model -> {MODEL_PATH}")
     return metrics
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=os.path.join("data", "trainset.npz"))
+    ap.add_argument("--data", default=TRAINSET_PATH)
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=1e-3)

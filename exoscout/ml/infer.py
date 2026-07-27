@@ -13,7 +13,7 @@ import functools
 
 import numpy as np
 
-MODEL_PATH = os.path.join("models", "astronet.pt")
+from exoscout.paths import MODEL_PATH
 
 
 @functools.lru_cache(maxsize=1)
