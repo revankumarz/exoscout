@@ -42,47 +42,90 @@ decision-support with a human in the loop - never assert a discovery."""
 
 
 def _synthesize_verdict(ctx: AgentContext) -> dict:
-    """Rule-based verdict from whatever tool results are in the context."""
-    lc = ctx.full.get("lightcurve", {})
+    """Rule-based verdict from whatever tool results are in the context.
+
+    Every field is gated on the evidence that supports it: a tool that did not
+    run, or that failed, yields "unknown" rather than a default. In particular
+    novelty is only called *novel* when both the archive and the literature
+    search actually succeeded and both came back empty - an absent search is
+    not evidence of absence. ``reasons`` records what drove each call so the
+    brief can show its working.
+    """
     vet = ctx.full.get("vetting", {})
     arch = ctx.full.get("archive", {})
     lit = ctx.full.get("literature", {})
     stel = ctx.full.get("stellar", {})
     plan = ctx.full.get("planning", {})
+    reasons: list[str] = []
 
-    transit_real = "unclear"
-    if vet.get("ok"):
-        transit_real = "no" if "FALSE POSITIVE" in vet.get("summary", "") else \
-            ("unclear" if "WEAK" in vet.get("summary", "") else "yes")
+    # ---- is the transit real? ----------------------------------------------
+    if not vet.get("ok"):
+        transit_real = "unknown"
+        reasons.append("Transit reality unknown: vetting did not run.")
+    elif "FALSE POSITIVE" in vet.get("summary", ""):
+        transit_real = "no"
+        reasons.append(f"Vetting: {vet['summary']} ({'; '.join(vet.get('flags', []))}).")
+    elif "WEAK" in vet.get("summary", ""):
+        transit_real = "unclear"
+        reasons.append(f"Vetting: weak signal (depth SNR {vet.get('depth_snr')}).")
+    else:
+        transit_real = "yes"
+        reasons.append(f"Vetting: passes odd/even, secondary and SNR checks "
+                       f"(depth SNR {vet.get('depth_snr')}).")
 
-    fp_risk = "medium"
-    if vet.get("ok"):
-        if vet.get("flags"):
-            fp_risk = "high"
-        elif "PASSES" in vet.get("summary", ""):
-            fp_risk = "low"
+    # ---- false-positive risk ------------------------------------------------
+    if not vet.get("ok"):
+        fp_risk = "unknown"
+    elif vet.get("flags"):
+        fp_risk = "high"
+    elif "PASSES" in vet.get("summary", ""):
+        fp_risk = "low"
+    else:
+        fp_risk = "medium"
+
     # SIMBAD calling it a binary/variable is a strong false-positive signal.
     if stel.get("eclipsing_binary_flag"):
         fp_risk = "high"
+        reasons.append(f"SIMBAD classifies the host as {stel.get('otype')} "
+                       "(eclipsing-binary risk).")
+
     # AstroNet CNN score, when available, sharpens the risk call.
     cnn = vet.get("cnn_score") if vet.get("ok") else None
     if cnn is not None:
-        if cnn < 0.3 and fp_risk != "high":
+        if cnn < 0.3 and fp_risk in ("low", "medium", "unknown"):
             fp_risk = "high"
-        elif cnn > 0.7 and fp_risk == "medium":
+            reasons.append(f"CNN P(planet)={cnn:.2f} - below the 0.30 planet threshold.")
+        elif cnn > 0.7 and fp_risk in ("medium", "unknown"):
             fp_risk = "low"
+            reasons.append(f"CNN P(planet)={cnn:.2f} - above the 0.70 planet threshold.")
+        else:
+            reasons.append(f"CNN P(planet)={cnn:.2f}.")
 
-    if arch.get("confirmed"):
+    # ---- novelty ------------------------------------------------------------
+    lit_searched = bool(lit.get("ok"))
+    lit_hits = int(lit.get("n_matches", 0) or 0)
+    if not arch.get("ok"):
+        novelty = "unknown (archive lookup failed)"
+        reasons.append("Novelty unknown: the archive lookup did not succeed.")
+    elif arch.get("confirmed"):
         novelty = "confirmed / known planet"
+        reasons.append(f"NASA Exoplanet Archive disposition: {arch.get('disposition')}.")
     elif arch.get("known"):
         novelty = "existing TOI candidate"
-    elif lit.get("ok") and lit.get("n_matches", 0) > 0:
+        reasons.append(f"Already catalogued: {arch.get('disposition')}.")
+    elif lit_searched and lit_hits > 0:
         novelty = "already studied in the literature"
-    elif arch.get("ok"):
+        reasons.append(f"{lit_hits} paper(s) mention this target.")
+    elif lit_searched:
         novelty = "novel (not in archives or literature)"
+        reasons.append("Absent from the archive and from arXiv/ADS.")
     else:
-        novelty = "unknown"
+        # Archive is clean but nobody checked the papers - do not claim novelty.
+        novelty = "not in archive (literature unchecked)"
+        reasons.append("Absent from the archive, but the literature search did "
+                       "not succeed - novelty cannot be claimed.")
 
+    # ---- recommendation -----------------------------------------------------
     where = f" Best placed at {plan['best']}." if plan.get("ok") and plan.get("best") else ""
     if novelty.startswith("novel") and fp_risk == "low" and transit_real == "yes":
         rec = "Strong follow-up target - schedule ground-based confirmation." + where
@@ -90,11 +133,13 @@ def _synthesize_verdict(ctx: AgentContext) -> dict:
         rec = "Likely false positive - deprioritise unless re-vetted."
     elif "confirmed" in novelty or "existing" in novelty or "studied" in novelty:
         rec = "Low novelty - already known/studied; not a new discovery."
+    elif fp_risk == "unknown" or novelty.startswith("unknown"):
+        rec = "Insufficient evidence - re-run the missing tools before judging."
     else:
         rec = "Inconclusive - gather more data before deciding." + where
 
     return {"transit_real": transit_real, "false_positive_risk": fp_risk,
-            "novelty": novelty, "recommendation": rec}
+            "novelty": novelty, "recommendation": rec, "reasons": reasons}
 
 
 def run_deterministic(target_text: str, max_period: float = 15.0,

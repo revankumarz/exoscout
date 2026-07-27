@@ -39,6 +39,8 @@ def build_brief(ctx: AgentContext) -> str:
             f"- **Novelty:** {verdict.get('novelty', 'n/a')}",
             f"- **Recommendation:** {verdict.get('recommendation', 'n/a')}",
         ]
+        if verdict.get("reasons"):
+            lines += ["", "**Why:**"] + [f"- {r}" for r in verdict["reasons"]]
     else:
         lines.append("- (no verdict synthesised)")
 

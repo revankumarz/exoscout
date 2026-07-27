@@ -157,6 +157,38 @@ def test_verdict_eb_flag_forces_high_fp():
     assert v["false_positive_risk"] == "high"
 
 
+def test_verdict_never_claims_novelty_without_a_literature_search():
+    """Regression: an absent or failed literature search is not evidence of
+    absence, so it must not license a 'novel' call."""
+    ctx = AgentContext(target=parse_target("TIC 999"))
+    ctx.full["archive"] = {"ok": True, "known": False, "confirmed": False}
+    ctx.full["literature"] = {"ok": False, "n_matches": 0}
+    v = _synthesize_verdict(ctx)
+    assert not v["novelty"].startswith("novel")
+    assert "literature" in v["novelty"]
+
+
+def test_verdict_claims_novelty_when_both_searches_ran_clean():
+    ctx = AgentContext(target=parse_target("TIC 999"))
+    ctx.full["archive"] = {"ok": True, "known": False, "confirmed": False}
+    ctx.full["literature"] = {"ok": True, "n_matches": 0}
+    assert _synthesize_verdict(ctx)["novelty"].startswith("novel")
+
+
+def test_verdict_is_unknown_without_vetting():
+    ctx = AgentContext(target=parse_target("TIC 999"))
+    ctx.full["archive"] = {"ok": True, "known": False, "confirmed": False}
+    v = _synthesize_verdict(ctx)
+    assert v["transit_real"] == "unknown"
+    assert v["false_positive_risk"] == "unknown"
+    assert "Insufficient evidence" in v["recommendation"]
+
+
+def test_verdict_reasons_are_populated():
+    v = _synthesize_verdict(_fake_ctx())
+    assert v["reasons"] and all(isinstance(r, str) for r in v["reasons"])
+
+
 # ---- brief -----------------------------------------------------------------
 def test_brief_has_sections():
     ctx = _fake_ctx()
