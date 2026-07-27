@@ -17,8 +17,26 @@ from __future__ import annotations
 import numpy as np
 
 
+# Detection / false-positive thresholds, in sigma.
+ODDEVEN_SIGMA_CUT = 3.0
+SECONDARY_SIGMA_CUT = 3.0
+DEPTH_SNR_CUT = 7.1  # TESS SPOC transit-detection threshold
+
+
 def _in_transit_mask(phase: np.ndarray, half_window: float) -> np.ndarray:
     return np.abs(phase) < half_window
+
+
+def _robust_sigma(x: np.ndarray) -> float:
+    """MAD-based per-point scatter, immune to the outliers std would chase."""
+    x = x[np.isfinite(x)]
+    if x.size < 2:
+        return 1e-6
+    mad = float(np.nanmedian(np.abs(x - np.nanmedian(x))))
+    sigma = 1.4826 * mad
+    if sigma <= 0:  # degenerate (e.g. flat synthetic flux) - fall back to std
+        sigma = float(np.nanstd(x))
+    return sigma if sigma > 0 else 1e-6
 
 
 def run_vetting(lc: dict, cnn_score=None) -> dict:
@@ -46,42 +64,59 @@ def run_vetting(lc: dict, cnn_score=None) -> dict:
         # Transit epoch number -> odd/even split.
         epoch = np.round((time - t0) / period).astype(int)
         in_tr = _in_transit_mask(phase, half_win)
-        out_tr = np.abs(phase) > 0.5 * 0.5  # far from transit, for the baseline
+        sec_mask = np.abs(np.abs(phase) - 0.5) < half_win
 
-        baseline = np.nanmedian(flux[out_tr]) if out_tr.any() else np.nanmedian(flux)
-        noise = np.nanstd(flux[out_tr]) if out_tr.sum() > 5 else np.nanstd(flux)
-        noise = float(noise) if noise > 0 else 1e-6
+        # Baseline/noise from flux that is in neither the primary nor the
+        # secondary window - otherwise a real secondary biases both.
+        out_tr = ~in_tr & ~sec_mask
+        if out_tr.sum() < 20:
+            out_tr = ~in_tr
+
+        base_flux = flux[out_tr] if out_tr.any() else flux
+        baseline = float(np.nanmedian(base_flux))
+        # Robust per-point scatter (MAD-based); std is inflated by residual
+        # systematics and outliers that survived cleaning.
+        noise = _robust_sigma(base_flux)
 
         def depth_of(mask):
-            sel = in_tr & mask
-            if sel.sum() < 3:
-                return np.nan, 0
-            return float(baseline - np.nanmedian(flux[sel])), int(sel.sum())
+            """Mean depth in a window and its standard error."""
+            sel = mask & np.isfinite(flux)
+            n = int(sel.sum())
+            if n < 3:
+                return np.nan, np.nan, 0
+            depth = float(baseline - np.nanmean(flux[sel]))
+            return depth, noise / np.sqrt(n), n
 
-        odd_depth, n_odd = depth_of(epoch % 2 == 1)
-        even_depth, n_even = depth_of(epoch % 2 == 0)
-        full_depth, n_in = depth_of(np.ones_like(epoch, dtype=bool))
+        odd_depth, odd_err, n_odd = depth_of(in_tr & (epoch % 2 == 1))
+        even_depth, even_err, n_even = depth_of(in_tr & (epoch % 2 == 0))
+        full_depth, full_err, n_in = depth_of(in_tr)
 
-        # Odd/even difference in units of noise (per-point) -> EB indicator.
+        # Odd/even difference in units of its own uncertainty -> EB indicator.
+        # The error on the difference propagates from both windows; using the
+        # per-point scatter here would understate it by ~sqrt(N) and hide EBs.
         if np.isfinite(odd_depth) and np.isfinite(even_depth):
-            oddeven_sigma = abs(odd_depth - even_depth) / (noise + 1e-9)
+            diff_err = np.hypot(odd_err, even_err)
+            oddeven_sigma = abs(odd_depth - even_depth) / (diff_err + 1e-12)
         else:
             oddeven_sigma = np.nan
 
         # Secondary eclipse near phase 0.5.
-        sec_mask = np.abs(np.abs(phase) - 0.5) < half_win
-        if sec_mask.sum() >= 3:
-            secondary_depth = float(baseline - np.nanmedian(flux[sec_mask]))
-            secondary_sigma = secondary_depth / (noise + 1e-9)
+        secondary_depth, secondary_err, n_sec = depth_of(sec_mask)
+        if np.isfinite(secondary_depth):
+            secondary_sigma = secondary_depth / (secondary_err + 1e-12)
         else:
-            secondary_depth, secondary_sigma = np.nan, np.nan
+            secondary_sigma = np.nan
 
-        depth_snr = (full_depth / (noise + 1e-9)) if np.isfinite(full_depth) else np.nan
+        # Depth SNR is depth over the *error on the mean depth*, which is the
+        # quantity thresholds like the TESS SPOC's 7.1-sigma cut refer to.
+        depth_snr = (full_depth / (full_err + 1e-12)) if np.isfinite(full_depth) else np.nan
 
-        # Simple rule-based flags (thresholds are deliberately conservative).
-        likely_eb = bool(np.isfinite(oddeven_sigma) and oddeven_sigma > 3.0)
-        has_secondary = bool(np.isfinite(secondary_sigma) and secondary_sigma > 3.0)
-        weak_signal = bool(np.isfinite(depth_snr) and depth_snr < 5.0)
+        # Rule-based flags. The significances above are now expressed in units
+        # of their own uncertainty, so these are the conventional cuts:
+        # 3-sigma for the EB tells, and the SPOC 7.1-sigma detection threshold.
+        likely_eb = bool(np.isfinite(oddeven_sigma) and oddeven_sigma > ODDEVEN_SIGMA_CUT)
+        has_secondary = bool(np.isfinite(secondary_sigma) and secondary_sigma > SECONDARY_SIGMA_CUT)
+        weak_signal = bool(not np.isfinite(depth_snr) or depth_snr < DEPTH_SNR_CUT)
 
         flags = []
         if likely_eb:
@@ -102,12 +137,17 @@ def run_vetting(lc: dict, cnn_score=None) -> dict:
             "ok": True,
             "error": None,
             "source": source,
+            "depth_ppm": full_depth * 1e6 if np.isfinite(full_depth) else None,
+            "depth_err_ppm": full_err * 1e6 if np.isfinite(full_err) else None,
+            "noise_ppm": noise * 1e6,
             "odd_depth_ppm": odd_depth * 1e6 if np.isfinite(odd_depth) else None,
             "even_depth_ppm": even_depth * 1e6 if np.isfinite(even_depth) else None,
             "oddeven_sigma": None if np.isnan(oddeven_sigma) else round(oddeven_sigma, 2),
             "secondary_depth_ppm": secondary_depth * 1e6 if np.isfinite(secondary_depth) else None,
             "secondary_sigma": None if np.isnan(secondary_sigma) else round(secondary_sigma, 2),
             "depth_snr": None if np.isnan(depth_snr) else round(depth_snr, 2),
+            "n_in_transit": n_in,
+            "n_secondary": n_sec,
             "n_odd": n_odd,
             "n_even": n_even,
             "flags": flags,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 import exoscout.cache as cache
 import exoscout.store as store
 from exoscout.agent import tools as agent_tools
@@ -10,6 +12,7 @@ from exoscout.agent.orchestrator import _synthesize_verdict
 from exoscout.brief import build_brief
 from exoscout.provenance import Provenance
 from exoscout.target import parse_target
+from exoscout.tools.vetting import run_vetting
 
 
 # ---- target parsing --------------------------------------------------------
@@ -43,6 +46,60 @@ def test_unknown_tool_is_safe():
     ctx = AgentContext(target=parse_target("TOI 1.01"))
     out = agent_tools.call_tool("does_not_exist", ctx, {})
     assert out["ok"] is False
+
+
+# ---- vetting on synthetic light curves --------------------------------------
+def _synth_lc(period=3.0, depth=1e-3, dur=0.1, noise=1e-3,
+              odd_extra=0.0, secondary=0.0, days=27.0):
+    """Boxcar transit + Gaussian noise, at TESS 2-minute cadence."""
+    rng = np.random.default_rng(0)
+    t = np.arange(0.0, days, 2.0 / 60.0 / 24.0)
+    phase = ((t + 0.5 * period) % period) / period - 0.5
+    epoch = np.round(t / period).astype(int)
+    half = (dur / period) / 2.0
+    in_tr = np.abs(phase) < half
+    sec = np.abs(np.abs(phase) - 0.5) < half
+
+    f = np.ones_like(t)
+    f[in_tr] -= depth
+    f[in_tr & (epoch % 2 == 1)] -= odd_extra   # unequal depths = EB tell
+    f[sec] -= secondary
+    f += rng.normal(0.0, noise, t.size)
+    return {"ok": True, "time": t.tolist(), "flux": f.tolist(),
+            "period": period, "t0": 0.0, "duration": dur}
+
+
+def test_vetting_passes_a_clean_planet():
+    """Depth == per-point noise still yields a high-significance detection,
+    because the SNR is on the *mean* depth over many in-transit points."""
+    r = run_vetting(_synth_lc())
+    assert r["ok"]
+    assert r["depth_snr"] > 10
+    assert r["summary"].startswith("PASSES")
+    assert r["flags"] == []
+
+
+def test_vetting_catches_odd_even_mismatch():
+    r = run_vetting(_synth_lc(odd_extra=5e-4))
+    assert r["oddeven_sigma"] > 3.0
+    assert "FALSE POSITIVE" in r["summary"]
+
+
+def test_vetting_catches_secondary_eclipse():
+    r = run_vetting(_synth_lc(secondary=4e-4))
+    assert r["secondary_sigma"] > 3.0
+    assert "FALSE POSITIVE" in r["summary"]
+
+
+def test_vetting_rejects_pure_noise():
+    r = run_vetting(_synth_lc(depth=0.0))
+    assert r["depth_snr"] < 7.1
+    assert "WEAK" in r["summary"]
+
+
+def test_vetting_handles_bad_input():
+    assert run_vetting({})["ok"] is False
+    assert run_vetting({"ok": False})["ok"] is False
 
 
 # ---- verdict synthesis (fake evidence, no network) -------------------------
