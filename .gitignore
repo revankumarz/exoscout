@@ -8,6 +8,7 @@ env/
 # Data caches / downloads (keep labeled_tois.csv, ignore the DB + downloads)
 data/*.db
 data/*.npz
+data/*.log
 mastDownload/
 *.fits
 .exoscout_cache/
